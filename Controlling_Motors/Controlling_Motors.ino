@@ -11,18 +11,16 @@ struct Wheels {
   T right;
 };
 
-const Wheels<int> WHEEL_PINS = {33, 32};
-//const int BUZZER_PIN = 32;
+// Constant storing the PWM signal pins on the esp for the wheels
+// The left wheels signal is outputed at pin 33 and right at pin 14
+const Wheels<int> WHEEL_PINS = {33, 14};
 
 GamepadPtr myGamepads[BP32_MAX_GAMEPADS];
-Servo servoRight, servoLeft;
+Servo servoRight, servoLeft; // Servo for left and right pins defined
 
-bool isEmoting = false;
-bool isPlayingSong = false;
 bool isCalibrating = false;
 
-int offsetX = 0, offsetY = 0;
-Wheels<int> offset = {0, 0};
+Wheels<int> offset = {0, 0}; // Offsets of wheel outputs for calibration
 
 // This callback gets called any time a new gamepad is connected.
 // Up to 4 gamepads can be connected at the same time.
@@ -99,6 +97,74 @@ void setup() {
 	}
 }
 
+void writeWheels(int left, int right) {
+  servoLeft.write(left);
+  servoRight.write(right);
+}
+
+void writeWheels(Wheels<int> dutyCycles) {
+  writeWheels(dutyCycles.left, dutyCycles.right);
+}
+
+Wheels<int> getWheelsDutyCycle(GamepadPtr myGamepad) {
+  int axisX = myGamepad->axisX(), axisY = myGamepad->axisY(), throttle = myGamepad->throttle();
+
+  Wheels<int> output = {0, 0};
+
+  if(axisX < 50 && axisX > -50 && axisY < 50 && axisY > -50) {
+    return output;
+  }
+
+  int both = -(axisY / 4);
+
+  if(axisY <= 0) {
+    if(axisX > 0) { // robot moving forward right
+      int left = both + (axisX / 4);
+      output.left = (left < 128) ? left : 127;
+      output.right = both;
+    } else { // robot moving forward left
+      int right = both - (axisX / 4);
+      output.right = (right < 128) ? right : 127;
+      output.left = both;
+    }
+  } else {
+    if(axisX > 0) { // robot moving backwards right
+      int left = both - (axisX / 4);
+      output.left = (left > -128) ? left : -128;
+      output.right = both;
+    } else { // robot moving backwards left
+      int right = both + (axisX / 4);
+      output.right = (right > -128) ? right : -128;
+      output.left = both;
+    }
+  }
+
+  if(myGamepad->x()) {
+    // If x is pressed on the controller, reset offsets and set isCalibrating to true for future calibration
+    offset.left = 0;
+    offset.right = 0;
+    isCalibrating = true;
+  } else if(isCalibrating) {
+    // Once calibration is done (x isn't pressed but isCalibrating is still true), set the new offsets
+    offset.left = output.left;
+    offset.right = output.right;
+    isCalibrating = false;
+  }
+
+  output.left += offset.left;
+  output.right += offset.right;
+
+  double scale = (double(throttle) / 2048.0) + 0.5;
+
+  output.right *= scale;
+  output.left *= scale;
+
+  output.right += 128;
+  output.left += 128;
+
+  return output;
+}
+
 // Arduino loop function. Runs in CPU 1
 void loop() {
   // This call fetches all the gamepad info from the NINA (ESP32) module.
@@ -116,26 +182,26 @@ void loop() {
     // There are different ways to query whether a button is pressed.
     // By query each button individually:
     //  a(), b(), x(), y(), l1(), etc...
-    if (myGamepad->a()) {
-      static int colorIdx = 0;
-      // Some gamepads like DS4 and DualSense support changing the color LED.
-      // It is possible to change it by calling:
-      switch (colorIdx % 3) {
-      case 0:
-        // Red
-        myGamepad->setColorLED(255, 0, 0);
-        break;
-      case 1:
-        // Green
-        myGamepad->setColorLED(0, 255, 0);
-        break;
-      case 2:
-        // Blue
-        myGamepad->setColorLED(0, 0, 255);
-        break;
-      }
-      colorIdx++;
-    }
+    // if (myGamepad->a()) {
+    //   static int colorIdx = 0;
+    //   // Some gamepads like DS4 and DualSense support changing the color LED.
+    //   // It is possible to change it by calling:
+    //   switch (colorIdx % 3) {
+    //   case 0:
+    //     // Red
+    //     myGamepad->setColorLED(255, 0, 0);
+    //     break;
+    //   case 1:
+    //     // Green
+    //     myGamepad->setColorLED(0, 255, 0);
+    //     break;
+    //   case 2:
+    //     // Blue
+    //     myGamepad->setColorLED(0, 0, 255);
+    //     break;
+    //   }
+    //   colorIdx++;
+    // }
 
     if (myGamepad->b()) {
       // Turn on the 4 LED. Each bit represents one LED.
@@ -157,59 +223,32 @@ void loop() {
     //   myGamepad->setRumble(0xc0 /* force */, 0xc0 /* duration */);
     // }
 
-    Serial.print(myGamepad->axisY());
-    Serial.print(", emoting: ");
-    Serial.print(isEmoting);
-    Serial.print(", song: ");
-    Serial.println(isPlayingSong);
-
     // Another way to query the buttons, is by calling buttons(), or
     // miscButtons() which return a bitmask.
     // Some gamepads also have DPAD, axis and more.
-    // Serial.printf(
-    //     "idx=%d, dpad: 0x%02x, buttons: 0x%04x, axis L: %4d, %4d, axis R: "
-    //     "%4d, %4d, brake: %4d, throttle: %4d, misc: 0x%02x, gyro x:%6d y:%6d "
-    //     "z:%6d, accel x:%6d y:%6d z:%6d\n",
-    //     i,                        // Gamepad Index
-    //     myGamepad->dpad(),        // DPAD
-    //     myGamepad->buttons(),     // bitmask of pressed buttons
-    //     myGamepad->axisX(),       // (-511 - 512) left X Axis
-    //     myGamepad->axisY(),       // (-511 - 512) left Y axis
-    //     myGamepad->axisRX(),      // (-511 - 512) right X axis
-    //     myGamepad->axisRY(),      // (-511 - 512) right Y axis
-    //     myGamepad->brake(),       // (0 - 1023): brake button
-    //     myGamepad->throttle(),    // (0 - 1023): throttle (AKA gas) button
-    //     myGamepad->miscButtons(), // bitmak of pressed "misc" buttons
-    //     myGamepad->gyroX(),       // Gyro X
-    //     myGamepad->gyroY(),       // Gyro Y
-    //     myGamepad->gyroZ(),       // Gyro Z
-    //     myGamepad->accelX(),      // Accelerometer X
-    //     myGamepad->accelY(),      // Accelerometer Y
-    //     myGamepad->accelZ()       // Accelerometer Z
-    // );
+    Serial.printf(
+        "idx=%d, dpad: 0x%02x, buttons: 0x%04x, axis L: %4d, %4d, axis R: "
+        "%4d, %4d, brake: %4d, throttle: %4d, misc: 0x%02x, gyro x:%6d y:%6d "
+        "z:%6d, accel x:%6d y:%6d z:%6d\n",
+        i,                        // Gamepad Index
+        myGamepad->dpad(),        // DPAD
+        myGamepad->buttons(),     // bitmask of pressed buttons
+        myGamepad->axisX(),       // (-511 - 512) left X Axis
+        myGamepad->axisY(),       // (-511 - 512) left Y axis
+        myGamepad->axisRX(),      // (-511 - 512) right X axis
+        myGamepad->axisRY(),      // (-511 - 512) right Y axis
+        myGamepad->brake(),       // (0 - 1023): brake button
+        myGamepad->throttle(),    // (0 - 1023): throttle (AKA gas) button
+        myGamepad->miscButtons(), // bitmak of pressed "misc" buttons
+        myGamepad->gyroX(),       // Gyro X
+        myGamepad->gyroY(),       // Gyro Y
+        myGamepad->gyroZ(),       // Gyro Z
+        myGamepad->accelX(),      // Accelerometer X
+        myGamepad->accelY(),      // Accelerometer Y
+        myGamepad->accelZ()       // Accelerometer Z
+    );
 
-    if(isEmoting) return;
-
-    // if(myGamepad->b() && !isEmoting) {
-    //   std::future<void> song = std::async(std::launch::async, playSong, billieJeanNotes, 130);
-    //   std::future<void> emote = std::async(std::launch::async, billieJeanEmote);
-    //   return;
-    // }
-
-    int axisY = myGamepad->axisY();
-    int axisX = myGamepad->axisX();
-    int dutyCycleRight = 128 - (axisY - axisX) / 4;
-    int dutyCycleLeft = 128 - (axisY + axisX) / 4;
-
-    if(dutyCycleRight >= 256) dutyCycleRight = 255;
-    if(dutyCycleRight < -256) dutyCycleRight = -256;
-    if(dutyCycleLeft >= 256) dutyCycleLeft = 255;
-    if(dutyCycleLeft < -256) dutyCycleLeft = -256;
-
-    servoRight.write(dutyCycleRight);
-    servoLeft.write(dutyCycleLeft);
-
-    // You can query the axis and other properties as well. See Gamepad.h
+    writeWheels(getWheelsDutyCycle(myGamepad));// You can query the axis and other properties as well. See Gamepad.h
     // For all the available functions.
   }
 
@@ -221,72 +260,4 @@ void loop() {
 
   // vTaskDelay(1);
   delay(150);
-}
-
-void writeWheels(int left, int right) {
-  servoLeft.write(left);
-  servoRight.write(right);
-}
-
-void writeWheels(Wheels<int> dutyCycles) {
-  writeWheels(dutyCycles.left, dutyCycles.right);
-}
-
-Wheels<int> getWheelsDutyCycle(GamepadPtr myGamepad) {
-  int axisX = myGamepad->axisX(), axisY = myGamepad->axisY(), throttle = myGamepad->throttle();
-
-  int adjAxisX = axisX - offsetX, adjAxisY = axisY - offsetY;
-
-  Wheels<int> output = {0, 0};
-
-  if(adjAxisX < 50 && adjAxisX > -50 && adjAxisY < 50 && adjAxisY > -50) {
-    return output;
-  }
-
-  int both = -(adjAxisY / 4);
-
-  if(adjAxisY <= 0) {
-    if(adjAxisX > 0) { // robot moving forward right
-      int left = both + (adjAxisX / 4);
-      output.left = (left < 128) ? left : 127;
-      output.right = both;
-    } else { // robot moving forward left
-      int right = both - (adjAxisX / 4);
-      output.right = (right < 128) ? right : 127;
-      output.left = both;
-    }
-  } else {
-    if(adjAxisX > 0) { // robot moving backwards right
-      int left = both - (adjAxisX / 4);
-      output.left = (left > -128) ? left : -128;
-      output.right = both;
-    } else { // robot moving backwards left
-      int right = both + (adjAxisX / 4);
-      output.right = (right > -128) ? right : -128;
-      output.left = both;
-    }
-  }
-
-  if(myGamepad->x()) {
-    offset.left = 0;
-    offset.left = 0;
-    isCalibrating = true;
-  } else if(isCalibrating) {
-    offset.left = output.left;
-    offset.right = output.right;
-    isCalibrating = false;
-  }
-
-  output.left -= offset.left;
-  output.right -= offset.right;
-
-  double scale = (double(throttle) / 2048.0) + 0.5;
-
-  output.right *= scale;
-  output.left *= scale;
-
-  output.right += 128;
-  output.left += 128;
-
-  return output;
 }
