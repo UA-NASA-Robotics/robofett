@@ -109,42 +109,40 @@ void writeWheels(Wheels<int> dutyCycles) {
 Wheels<int> getWheelsDutyCycle(GamepadPtr myGamepad) {
   int axisX = myGamepad->axisX(), axisY = myGamepad->axisY(), throttle = myGamepad->throttle();
 
-  Wheels<int> output = {0, 0};
-
-  if(axisX < 50 && axisX > -50 && axisY < 50 && axisY > -50) {
-    return output;
-  }
+  Wheels<int> output;
 
   int both = -(axisY / 4);
 
-  if(axisY <= 0) {
-    if(axisX > 0) { // robot moving forward right
-      int left = both + (axisX / 4);
+  if (!isCalibrating && axisX < 50 && axisX > -50 && axisY < 50 && axisY > -50) {
+    output = {0, 0};
+  } else if (axisY <= 0) {
+    if (axisX > 0) { // robot moving forward right
+      int left = both - (axisX / 4);
       output.left = (left < 128) ? left : 127;
       output.right = both;
     } else { // robot moving forward left
-      int right = both - (axisX / 4);
+      int right = both + (axisX / 4);
       output.right = (right < 128) ? right : 127;
       output.left = both;
     }
   } else {
-    if(axisX > 0) { // robot moving backwards right
-      int left = both - (axisX / 4);
+    if (axisX > 0) { // robot moving backwards right
+      int left = both + (axisX / 4);
       output.left = (left > -128) ? left : -128;
       output.right = both;
     } else { // robot moving backwards left
-      int right = both + (axisX / 4);
+      int right = both - (axisX / 4);
       output.right = (right > -128) ? right : -128;
       output.left = both;
     }
   }
 
-  if(myGamepad->x()) {
+  if (myGamepad->x()) {
     // If x is pressed on the controller, reset offsets and set isCalibrating to true for future calibration
     offset.left = 0;
     offset.right = 0;
     isCalibrating = true;
-  } else if(isCalibrating) {
+  } else if (isCalibrating) {
     // Once calibration is done (x isn't pressed but isCalibrating is still true), set the new offsets
     offset.left = output.left;
     offset.right = output.right;
@@ -154,7 +152,7 @@ Wheels<int> getWheelsDutyCycle(GamepadPtr myGamepad) {
   output.left += offset.left;
   output.right += offset.right;
 
-  double scale = (double(throttle) / 2048.0) + 0.5;
+  double scale = (!isCalibrating && axisX < 50 && axisX > -50 && axisY < 50 && axisY > -50) ? 0.5 : (double(throttle) / 2048.0) + 0.5;
 
   output.right *= scale;
   output.left *= scale;
